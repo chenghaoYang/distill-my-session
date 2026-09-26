@@ -1,0 +1,4 @@
+interface:
+  display_name: "Distill My Session"
+  short_description: "Distill your agent sessions into a declassified playbook of named moves"
+  default_prompt: "Use $distill-my-session to distill my last 7 days of Claude Code and Codex sessions into a declassified learning bundle."

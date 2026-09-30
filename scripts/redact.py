@@ -44,7 +44,7 @@ SECRET_PATTERNS = [
     ("jwt", rx(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}")),
     ("bearer", rx(r"(?i)\b(bearer|token|basic)\s+[A-Za-z0-9._~+/\-]{20,}=*")),
     ("assignment", rx(r"(?i)\b([A-Z0-9_\-]*(?:api[_\-]?key|secret|token|passwd|password|pwd|cookie|session[_\-]?id|access[_\-]?key|private[_\-]?key)[A-Z0-9_\-]*)"
-                              r"(\s*[:=]\s*[\"']?)([^\s\"',;]{6,})")),
+                              r"([\"']?\s*[:=]\s*[\"']?)([^\s\"',;]{6,})")),
 ]
 URL_RE = rx(r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s<>\"'`)\]]+")
 EMAIL_RE = rx(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}(?![A-Za-z])")
@@ -217,13 +217,14 @@ class Redactor:
             return f"\x00{len(protected) - 1}\x00"
 
         text = MD_ESCAPE_RE.sub(r"\1", text)      # desktop apps store markdown-escaped text: user\_x, a\@b.com
-        for pat in self.allow_terms:
-            text = pat.sub(protect, text)
         for cls, pat in SECRET_PATTERNS:
             if cls == "assignment":
                 text = pat.sub(lambda m: (self._count("secret"), f"{m.group(1)}{m.group(2)}[SECRET]")[1], text)
             else:
                 text = pat.sub(lambda m: (self._count("secret"), "[SECRET]")[1], text)
+        # Public names may be allowlisted; credentials must never bypass masking.
+        for pat in self.allow_terms:
+            text = pat.sub(protect, text)
         text = URL_RE.sub(self._url, text)
         text = EMAIL_RE.sub(lambda m: (self._count("email"), "[EMAIL]")[1], text)
         for pat, al in self.deny:
@@ -251,13 +252,17 @@ class Redactor:
 
 
 # ---- leak check ------------------------------------------------------------
-LEAK_PATTERNS = [(cls, pat) for cls, pat in SECRET_PATTERNS if cls != "assignment"] + [
+LEAK_PATTERNS = list(SECRET_PATTERNS) + [
     ("email", EMAIL_RE), ("ip", IPV4_RE), ("phone", PHONE_RE), ("abs-path", HOME_RE), ("host", HOSTNAME_RE),
     ("uuid", UUID_RE), ("abs-path", ABS_PATH_RE), ("domain", DOMAIN_RE), ("ssh-target", SSH_RE), ("url-path", rx(r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s\])>]+/[^\s\])>]+")),
 ]
 
 
 def leakcheck(root: Path, denylist: Path | None, aliases: Path | None, allowlist: Path | None = None) -> list[tuple[str, int, str, str]]:
+    if not root.exists():
+        raise FileNotFoundError(f"leakcheck target does not exist: {root}")
+    if not root.is_file() and not root.is_dir():
+        raise OSError(f"leakcheck target is not a regular file or directory: {root}")
     deny = load_denylists(denylist, aliases)
     allow = [p for p, _ in load_list(allowlist or CONFIG_DIR / "allowlist.txt")]
     real_names: list[re.Pattern] = []
@@ -282,18 +287,21 @@ def leakcheck(root: Path, denylist: Path | None, aliases: Path | None, allowlist
     for f in files:
         if f.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ico"}:
             continue
-        try:
-            lines = f.read_text(encoding="utf-8").splitlines()
-        except (UnicodeDecodeError, OSError):
-            continue
+        # Unreadable text is an incomplete scan, never a clean result.
+        lines = f.read_text(encoding="utf-8").splitlines()
         for n, line in enumerate(lines, 1):
+            line = MD_ESCAPE_RE.sub(r"\1", line)
             scrub = line
             for p in allow:
                 scrub = p.sub(" ", scrub)
             checks = [(c, p) for c, p in LEAK_PATTERNS] + [("denylist", p) for p, _ in deny] + [("real-name", p) for p in real_names]
             for cls, pat in checks:
-                for m in pat.finditer(scrub):
+                # An allowlist is not permission to publish credentials.
+                source = line if cls in {name for name, _ in SECRET_PATTERNS} else scrub
+                for m in pat.finditer(source):
                     hit = m.group(0)
+                    if cls == "assignment" and m.group(3) in {"[SECRET]", "[REDACTED]"}:
+                        continue
                     if cls == "ip" and hit.startswith("127."):
                         continue
                     if cls == "url-path" and any(h in hit for h in ("github.com/justinatusa/vocabulary-first",)):

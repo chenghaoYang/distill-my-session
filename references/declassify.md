@@ -53,6 +53,6 @@ Ask the operator for company names, codenames, colleague names, and paper keywor
 
 ## Verification gate
 
-1. `distill.py leakcheck <out>/public` exits 0. It also flags real project names from `aliases.json`, denylist hits, secrets, emails, IPs, absolute paths, long high-entropy strings.
+1. `distill.py leakcheck <out>/public` exits 0 only when the text scan completes without blocking findings. Missing targets or unreadable text exit 2; findings requiring removal exit 1. It flags known secret patterns (including password/token assignments), real project names from `aliases.json`, denylist hits, emails, IPs, absolute paths, and long high-entropy strings. An allowlist can preserve public names, but cannot exempt detected credentials. These pattern checks are not proof that a bundle is safe; skipped image/PDF content and semantic disclosures still need review.
 2. A red-team teammate that sees **only** `public/` (not the denylist, not `private/`) plays an outsider and answers: *what can I infer about the employer, projects, colleagues, unpublished research?* You judge each inference against what you know is sensitive; fix every real one; rerun 1.
 3. Show the operator the file list and the red-team report. Publish only on explicit approval.

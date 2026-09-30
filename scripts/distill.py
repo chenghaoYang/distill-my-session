@@ -652,13 +652,17 @@ def cmd_suggest(args):
 
 
 # ----------------------------------------------------------- leakcheck -----
-BLOCKING = {"pem", "token", "jwt", "bearer", "email", "ip", "phone", "abs-path", "host", "denylist", "real-name", "high-entropy"}
+BLOCKING = {"pem", "token", "jwt", "bearer", "assignment", "email", "ip", "phone", "abs-path", "host", "denylist", "real-name", "high-entropy"}
 
 
 def cmd_leakcheck(args):
     root = Path(args.path)
     aliases = Path(args.aliases) if args.aliases else (root.parent / "private" / "aliases.json")
-    findings = leakcheck(root, Path(args.denylist) if args.denylist else None, aliases)
+    try:
+        findings = leakcheck(root, Path(args.denylist) if args.denylist else None, aliases)
+    except (OSError, UnicodeError) as exc:
+        print(f"leakcheck incomplete: {exc}", file=sys.stderr)
+        sys.exit(2)
     block = [f for f in findings if f[2] in BLOCKING]
     review = [f for f in findings if f[2] not in BLOCKING]
     for f, n, cls, hit in block + review:
